@@ -14,8 +14,6 @@
 
   <style>
     body { font-family: 'Outfit', sans-serif; -webkit-tap-highlight-color: transparent; }
-    
-    /* Special Font for Roman Numerals */
     .roman-font { font-family: 'Cinzel', serif; }
 
     .glass-card {
@@ -25,25 +23,13 @@
       border: 1px solid rgba(255, 255, 255, 0.1);
       box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
     }
-
     .slot-hover:active { transform: scale(0.95); }
-    
     .signature-glow { text-shadow: 0 0 10px rgba(212, 175, 55, 0.5); }
-
-    /* Shake animation for denied clicks */
     .shake { animation: shake 0.5s; }
     @keyframes shake {
-      0% { transform: translate(1px, 1px) rotate(0deg); }
-      10% { transform: translate(-1px, -2px) rotate(-1deg); }
-      20% { transform: translate(-3px, 0px) rotate(1deg); }
-      30% { transform: translate(3px, 2px) rotate(0deg); }
-      40% { transform: translate(1px, -1px) rotate(1deg); }
-      50% { transform: translate(-1px, 2px) rotate(-1deg); }
-      60% { transform: translate(-3px, 1px) rotate(0deg); }
-      70% { transform: translate(3px, 1px) rotate(-1deg); }
-      80% { transform: translate(-1px, -1px) rotate(1deg); }
-      90% { transform: translate(1px, 2px) rotate(0deg); }
-      100% { transform: translate(1px, -2px) rotate(-1deg); }
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-5px); }
+      75% { transform: translateX(5px); }
     }
   </style>
 </head>
@@ -71,6 +57,13 @@
        <div class="col-span-full py-10 text-gray-600 animate-pulse">
          <i class="fas fa-circle-notch fa-spin mr-2"></i> Initializing Database...
        </div>
+    </div>
+    
+    <div id="repair-box" class="hidden mt-8">
+        <p class="text-red-400 text-sm mb-2">⚠️ Database Connection Lost or Empty</p>
+        <button onclick="forceRepair()" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-6 rounded-full shadow-lg transition-all">
+            <i class="fas fa-tools mr-2"></i> REPAIR DATABASE
+        </button>
     </div>
     
   </div>
@@ -103,12 +96,125 @@
     const db = getDatabase(app);
     const dbRef = ref(db, 'slots');
 
-    // HELPER: Convert 1-10 to Roman Numerals
-    const toRoman = (num) => {
-        const roman = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-        return roman[num] || num;
-    };
+    // Helper: Roman Numerals
+    const toRoman = (num) => ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][num] || num;
 
-    // 1. REAL-TIME LISTENER
+    // 1. LISTENER
     onValue(dbRef, (snapshot) => {
         const data = snapshot.val();
+        
+        // Update Badge
+        const badge = document.getElementById('status-badge');
+        badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></span> System Live`;
+        badge.className = "inline-flex items-center px-3 py-1 rounded-full border border-green-500/30 bg-green-500/10 text-green-400 text-xs tracking-widest uppercase mb-4";
+
+        // Handle Empty vs Full Data
+        if (!data) {
+            // SHOW REPAIR BUTTON IF EMPTY
+            document.getElementById('cards-grid').innerHTML = ''; // Clear loader
+            document.getElementById('repair-box').classList.remove('hidden');
+            
+            // Try auto-fix silently first
+            forceRepair(true);
+        } else {
+            // HIDE REPAIR BUTTON & RENDER
+            document.getElementById('repair-box').classList.add('hidden');
+            render(data);
+        }
+    });
+
+    // 2. FORCE REPAIR FUNCTION
+    window.forceRepair = (silent = false) => {
+        const initialData = {};
+        for(let i=1; i<=10; i++) initialData[`slot${i}`] = { val: 0 };
+        
+        set(dbRef, initialData)
+            .then(() => {
+                if(!silent) alert("✅ Database Repaired Successfully!");
+            })
+            .catch((error) => {
+                if(!silent) alert("❌ Error: " + error.message + "\nCheck Firebase Rules!");
+            });
+    };
+
+    // 3. RENDER FUNCTION
+    function render(data) {
+        const grid = document.getElementById('cards-grid');
+        grid.innerHTML = ''; 
+        const myPick = localStorage.getItem('fairdraw_receipt');
+
+        let i = 1;
+        Object.keys(data).sort().forEach(key => {
+            const slot = data[key];
+            const isTaken = slot.val !== 0;
+            const el = document.createElement('div');
+            
+            let css = "glass-card rounded-xl h-40 flex flex-col items-center justify-center relative transition-all duration-300 ";
+            
+            if(isTaken) {
+                const isMySlot = myPick === key;
+                if(isMySlot) css += "border-green-500 bg-green-900/20 scale-105 shadow-2xl shadow-green-900/50";
+                else css += "border-yellow-500/50 bg-yellow-900/20";
+
+                el.innerHTML = `
+                    <div class="text-[10px] ${isMySlot ? 'text-green-400' : 'text-yellow-500'} font-bold tracking-widest uppercase mb-1">
+                        ${isMySlot ? 'YOUR PICK' : 'Position'}
+                    </div>
+                    <div class="text-5xl font-bold text-white drop-shadow-lg roman-font">${toRoman(slot.val)}</div>
+                    <div class="absolute bottom-2 text-[10px] text-gray-500">SLOT ${String(i).padStart(2,'0')}</div>
+                `;
+            } else {
+                css += "slot-hover cursor-pointer hover:bg-white/5 active:scale-95";
+                if(myPick) css += " opacity-50 cursor-not-allowed";
+
+                el.onclick = (e) => {
+                    if(myPick) {
+                        e.currentTarget.classList.add('shake');
+                        setTimeout(() => e.currentTarget.classList.remove('shake'), 500);
+                        alert("🚫 One slot per person! You have already picked.");
+                        return;
+                    }
+                    draw(key);
+                }; 
+
+                el.innerHTML = `
+                    <div class="text-3xl text-gray-600 mb-2 transition-colors group-hover:text-white"><i class="fas fa-lock"></i></div>
+                    <div class="text-lg text-gray-400 font-medium">SLOT ${String(i).padStart(2,'0')}</div>
+                    <div class="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">Tap to Unlock</div>
+                `;
+            }
+            el.className = css;
+            grid.appendChild(el);
+            i++;
+        });
+    }
+
+    // 4. DRAW FUNCTION
+    function draw(key) {
+        runTransaction(dbRef, (data) => {
+            if(!data) return;
+            if(data[key].val !== 0) return;
+            const used = Object.values(data).map(s => s.val);
+            const avail = [1,2,3,4,5,6,7,8,9,10].filter(n => !used.includes(n));
+            if(!avail.length) return;
+            data[key].val = avail[Math.floor(Math.random() * avail.length)];
+            return data;
+        }).then(() => {
+             localStorage.setItem('fairdraw_receipt', key);
+             confetti({ particleCount: 150, spread: 100, origin: { y: 0.6 }, colors: ['#FFD700', '#FFFFFF'] });
+        });
+    }
+
+    // 5. ADMIN RESET
+    window.adminReset = () => {
+        const pass = prompt("🔐 Enter Admin Password:");
+        if(pass === "admin123") {
+            if(confirm("⚠️ Clear board?")) {
+                set(dbRef, null);
+                localStorage.removeItem('fairdraw_receipt');
+            }
+        }
+    };
+  </script>
+</body>
+</html>
